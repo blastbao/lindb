@@ -30,8 +30,10 @@ import (
 const (
 	// size of the queue that workers register their availability to the dispatcher.
 	readyWorkerQueueSize = 32
+
 	// size of the tasks queue
 	tasksCapacity = 8
+
 	// sleeps in this interval when there are no available workers
 	sleepInterval = time.Millisecond * 5
 )
@@ -49,13 +51,25 @@ type Pool interface {
 	//
 	// After the maximum number of workers are running, and no workers are ready,
 	// execute function will be blocked.
+	//
+	// 提交任务 - 异步
 	Submit(task Task)
+
 	// SubmitAndWait executes the task and waits for it to be executed.
+	//
+	// 提交任务 - 同步
 	SubmitAndWait(task Task)
+
+
 	// Stopped returns true if this pool has been stopped.
+	//
+	// 是否停止
 	Stopped() bool
+
 	// Stop stops all goroutines gracefully,
 	// all pending tasks will be finished before exit
+	//
+	// 停止
 	Stop()
 }
 

@@ -376,11 +376,14 @@ func (mdb *metadataDatabase) GenFieldID(
 
 // GenTagKeyID generates the tag key id in the memory
 // !!!!! NOTICE: metric metadata must be exist in memory, because gen metric has been saved
+//
+//
 func (mdb *metadataDatabase) GenTagKeyID(namespace, metricName, tagKey string) (tagKeyID uint32, err error) {
 	key := metricchecker.JoinNamespaceMetric(namespace, metricName)
 
 	mdb.rwMux.Lock()
 	defer mdb.rwMux.Unlock()
+
 	// read from memory metric metadata
 	metricMetadata := mdb.metrics[key]
 	tagKeyID, ok := metricMetadata.getTagKeyID(tagKey)
@@ -388,6 +391,7 @@ func (mdb *metadataDatabase) GenTagKeyID(namespace, metricName, tagKey string) (
 		mdb.statistics.genTagKeyIDCounter.Incr()
 		return tagKeyID, nil
 	}
+
 	// check tag keys count before create
 	if err = metricMetadata.checkTagKeyCount(); err != nil {
 		return 0, err
@@ -411,8 +415,7 @@ func (mdb *metadataDatabase) GenTagKeyID(namespace, metricName, tagKey string) (
 // Sync syncs the bbolt.DB's data file and metadata write ahead log
 func (mdb *metadataDatabase) Sync() error {
 	if err := mdb.metaWAL.Sync(); err != nil {
-		metaLogger.Error("sync meta wal err when invoke sync",
-			logger.String("db", mdb.path), logger.Error(err))
+		metaLogger.Error("sync meta wal err when invoke sync", logger.String("db", mdb.path), logger.Error(err))
 	}
 	return nil
 }
@@ -481,49 +484,51 @@ func (mdb *metadataDatabase) metaRecovery() {
 	defer mdb.statistics.recoveryMetaWALTimer.UpdateSince(startTime)
 
 	event := newMetadataUpdateEvent()
-	mdb.metaWAL.Recovery(func(namespace, metricName string, metricID uint32) error {
-		event.addMetric(namespace, metricName, metricID)
-
-		if event.isFull() {
-			if err := mdb.backend.saveMetadata(event); err != nil {
-				return err
+	mdb.metaWAL.Recovery(
+		func(namespace, metricName string, metricID uint32) error {
+			event.addMetric(namespace, metricName, metricID)
+			if event.isFull() {
+				if err := mdb.backend.saveMetadata(event); err != nil {
+					return err
+				}
+				event = newMetadataUpdateEvent()
 			}
-			event = newMetadataUpdateEvent()
-		}
-		return nil
-	}, func(metricID uint32, fID field.ID, fieldName field.Name, fType field.Type) error {
-		event.addField(metricID, field.Meta{
-			ID:   fID,
-			Type: fType,
-			Name: fieldName,
-		})
-
-		if event.isFull() {
-			if err := mdb.backend.saveMetadata(event); err != nil {
-				return err
+			return nil
+		},
+		func(metricID uint32, fID field.ID, fieldName field.Name, fType field.Type) error {
+			event.addField(metricID, field.Meta{
+				ID:   fID,
+				Type: fType,
+				Name: fieldName,
+			})
+			if event.isFull() {
+				if err := mdb.backend.saveMetadata(event); err != nil {
+					return err
+				}
+				event = newMetadataUpdateEvent()
 			}
-			event = newMetadataUpdateEvent()
-		}
-		return nil
-	}, func(metricID uint32, tagKeyID uint32, tagKey string) error {
-		event.addTagKey(metricID, tag.Meta{
-			Key: tagKey,
-			ID:  tagKeyID,
-		})
-
-		if event.isFull() {
-			if err := mdb.backend.saveMetadata(event); err != nil {
-				return err
+			return nil
+		},
+		func(metricID uint32, tagKeyID uint32, tagKey string) error {
+			event.addTagKey(metricID, tag.Meta{
+				Key: tagKey,
+				ID:  tagKeyID,
+			})
+			if event.isFull() {
+				if err := mdb.backend.saveMetadata(event); err != nil {
+					return err
+				}
+				event = newMetadataUpdateEvent()
 			}
-			event = newMetadataUpdateEvent()
-		}
-		return nil
-	}, func() error {
-		if !event.isEmpty() {
-			if err := mdb.backend.saveMetadata(event); err != nil {
-				return err
+			return nil
+		},
+		func() error {
+			if !event.isEmpty() {
+				if err := mdb.backend.saveMetadata(event); err != nil {
+					return err
+				}
 			}
-		}
-		return mdb.backend.sync()
-	})
+			return mdb.backend.sync()
+		},
+	)
 }

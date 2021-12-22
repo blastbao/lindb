@@ -43,11 +43,18 @@ type MetricIDMapping interface {
 }
 
 // metricIDMapping implements MetricIDMapping interface
+//
+// 每个 tagsHash 对应一个 series
 type metricIDMapping struct {
 	metricID uint32
+
+
 	// forwardIndex for storing a mapping from tag-hash to the seriesID,
 	// purpose of this index is used for fast writing
+	//
+	// 正排索引，存储了 tagsHash => seriesId 的映射，用于快速写入。
 	hash2SeriesID     map[uint64]uint32
+
 	idSequence        atomic.Uint32
 	maxSeriesIDsLimit atomic.Uint32 // maximum number of combinations of series ids
 }
@@ -74,12 +81,14 @@ func (mim *metricIDMapping) GetSeriesID(tagsHash uint64) (seriesID uint32, ok bo
 }
 
 // AddSeriesID adds the series id init cache
+// 保存
 func (mim *metricIDMapping) AddSeriesID(tagsHash uint64, seriesID uint32) {
 	mim.hash2SeriesID[tagsHash] = seriesID
 }
 
 // GenSeriesID generates series id by tags hash, then cache new series id
 func (mim *metricIDMapping) GenSeriesID(tagsHash uint64) (seriesID uint32) {
+
 	// generate new series id
 	if mim.maxSeriesIDsLimit.Load() == mim.idSequence.Load() {
 		//FIXME too many series id, use max limit????
@@ -87,6 +96,7 @@ func (mim *metricIDMapping) GenSeriesID(tagsHash uint64) (seriesID uint32) {
 	} else {
 		seriesID = mim.idSequence.Inc()
 	}
+
 	// cache it
 	mim.hash2SeriesID[tagsHash] = seriesID
 	return seriesID

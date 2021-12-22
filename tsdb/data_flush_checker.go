@@ -134,8 +134,10 @@ func (fc *dataFlushChecker) startCheckDataFlush() {
 			return
 		case <-timer.C:
 			needFlushShards := make(map[string]*flushRequest)
+
 			// check each family if need do flush job
 			GetFamilyManager().WalkEntry(func(family DataFamily) {
+
 				if family.NeedFlush() {
 					shard := family.Shard()
 					needFlushShard, ok := needFlushShards[shard.Indicator()]

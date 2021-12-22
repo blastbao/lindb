@@ -10,7 +10,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.1.1
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/dustin/go-humanize v1.0.0
-	github.com/fatih/color v1.13.0 // indirect
 	github.com/felixge/fgprof v0.9.1
 	github.com/gin-contrib/cors v1.3.1
 	github.com/gin-contrib/pprof v1.3.0
@@ -29,7 +28,6 @@ require (
 	github.com/mattn/go-colorable v0.1.11 // indirect
 	github.com/mattn/go-isatty v0.0.14
 	github.com/pkg/errors v0.8.1
-	github.com/rakyll/gotest v0.0.6 // indirect
 	github.com/shirou/gopsutil v3.21.5+incompatible
 	github.com/spf13/cobra v0.0.3
 	github.com/stretchr/testify v1.7.0

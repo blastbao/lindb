@@ -47,15 +47,20 @@ func newMappingEvent() *mappingEvent {
 
 // addSeriesID adds series data for metric
 func (event *mappingEvent) addSeriesID(metricID uint32, tagsHash uint64, seriesID uint32) {
+
+	// 按 metricID 分组聚合。
+
 	e, ok := event.events[metricID]
 	if !ok {
 		e = &metricEvent{}
 		event.events[metricID] = e
 	}
+
 	e.events = append(e.events, seriesEvent{
 		tagsHash: tagsHash,
 		seriesID: seriesID,
 	})
+
 	// set id sequence directly, because gen series id in order
 	e.metricIDSeq = seriesID
 	event.pending++

@@ -25,8 +25,11 @@ import (
 
 // metadata implements Metadata interface
 type metadata struct {
+	// 数据库名称
 	databaseName     string // database name
+	// 数据库元数据
 	metadataDatabase MetadataDatabase
+	// 标签元数据
 	tagMetadata      TagMetadata
 }
 

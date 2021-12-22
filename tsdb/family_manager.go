@@ -67,6 +67,7 @@ func (sm *familyManager) RemoveFamily(family DataFamily) {
 }
 
 // WalkEntry walks each family entry via fn.
+// 遍历每个 family 逐个执行 fn()
 func (sm *familyManager) WalkEntry(fn func(family DataFamily)) {
 	sm.families.Range(func(key, value interface{}) bool {
 		family := value.(DataFamily)

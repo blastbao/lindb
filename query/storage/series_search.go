@@ -67,12 +67,15 @@ func (s *seriesSearch) Search() (*roaring.Bitmap, error) {
 
 // findSeriesIDsByExpr finds series ids by expr, recursion filter for expr
 func (s *seriesSearch) findSeriesIDsByExpr(condition stmt.Expr) (uint32, *roaring.Bitmap) {
+
 	if condition == nil {
 		return 0, roaring.New() // create a empty series ids for parent expr
 	}
+
 	if s.err != nil {
 		return 0, roaring.New() // create a empty series ids for parent expr
 	}
+
 	switch expr := condition.(type) {
 	case stmt.TagFilter:
 		tagKey, seriesIDs, err := s.getSeriesIDsByExpr(expr)
@@ -84,14 +87,17 @@ func (s *seriesSearch) findSeriesIDsByExpr(condition stmt.Expr) (uint32, *roarin
 	case *stmt.ParenExpr:
 		return s.findSeriesIDsByExpr(expr.Expr)
 	case *stmt.NotExpr:
+
 		// get filter series ids
 		tagKey, matchResult := s.findSeriesIDsByExpr(expr.Expr)
+
 		// get all series ids for tag key
 		all, err := s.filter.GetSeriesIDsForTag(tagKey)
 		if err != nil {
 			s.err = err
 			return tagKey, roaring.New() // create a empty series ids for parent expr
 		}
+
 		// do and not got series ids not in 'a' list
 		all.AndNot(matchResult)
 		return 0, all
@@ -110,13 +116,16 @@ func (s *seriesSearch) findSeriesIDsByExpr(condition stmt.Expr) (uint32, *roarin
 
 // getTagKeyID returns the tag key id by tag key
 func (s *seriesSearch) getSeriesIDsByExpr(expr stmt.Expr) (uint32, *roaring.Bitmap, error) {
+
 	tagValues, ok := s.filterResult[expr.Rewrite()]
 	if !ok {
 		return 0, nil, fmt.Errorf("%w, expr: %s", constants.ErrTagValueFilterResultNotFound, expr.Rewrite())
 	}
+
 	seriesIDs, err := s.filter.GetSeriesIDsByTagValueIDs(tagValues.tagKey, tagValues.tagValueIDs)
 	if err != nil {
 		return 0, nil, err
 	}
+
 	return tagValues.tagKey, seriesIDs, nil
 }

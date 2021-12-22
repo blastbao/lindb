@@ -31,42 +31,61 @@ var (
 )
 
 const (
+	// Meta 页大小为 64 MB
 	metricMetaPageSize = 64 * 1024 * 1024 // 64M
+
+	// 类型 + 长度 + Metric 长度 + Metric ID
+	//
 	// type(1 byte) + ns length (1 byte) + metric length (1 byte) + metric id (4 bytes)
 	metricBaseLength = 1 + 1 + 1 + 4
+
+	// 字段长度: 类型 + FieldID + 类型 + 长度 + MetricID
+	//
 	// type(1 byte) + field id (1 byte) + field type (1 byte) + field length (1 byte) + metric id (4 bytes)
 	fieldBaseLength = 1 + 1 + 1 + 1 + 4
+
+	//
+	//
 	// type(1 byte) + tag key length (1 byte) + metric id (4 bytes) + tag key id (4 bytes)
 	tagKeyBaseLength = 1 + 1 + 4 + 4
 )
 
 // metaType represents meta type
+// 元类型
 type metaType uint8
 
 // Defines all meta types
+// 元类型定义
 const (
-	metricType metaType = iota + 1
-	fieldType
-	tagKeyType
+	metricType metaType = iota + 1	// Metric
+	fieldType						// Field
+	tagKeyType						// Tag
 )
 
 // MetricMetaWAL represents write ahead log which stores metric metadata for meta database
 type MetricMetaWAL interface {
+
 	// AppendMetric appends namespace/metricName/metricID into wal log
 	AppendMetric(namespace, metricName string, metricID uint32) error
+
 	// AppendField appends metricID/fieldID/fieldName/fieldType into wal log
 	AppendField(metricID uint32, fID field.ID, fieldName field.Name, fType field.Type) error
+
 	// AppendTagKey appends metricID/tagKeyID/tagKey into wal log
 	AppendTagKey(metricID uint32, tagKeyID uint32, tagKey string) error
+
 	// NeedRecovery checks if wal log need to recover
 	NeedRecovery() bool
+
 	// Recovery recoveries wal log, then writes data via recovery function
 	Recovery(metricRecovery MetricRecoveryFunc,
 		fieldRecovery FieldRecoveryFunc,
 		tagKeyRecovery TagKeyRecoveryFunc,
 		commit CommitFunc)
+
 	// Sync flushes data into disk
 	Sync() error
+
 	// Close closes the wal log
 	Close() error
 }
@@ -87,9 +106,12 @@ func NewMetricMetaWAL(path string) (MetricMetaWAL, error) {
 
 // AppendMetric appends namespace/metricName/metricID into wal log
 func (m *metricMetaWAL) AppendMetric(namespace, metricName string, metricID uint32) error {
+	// 检查当前 Page 是否已满，若满则创建新 Page 。
 	if err := m.base.checkPage(len(namespace) + len(metricName) + metricBaseLength); err != nil {
 		return err
 	}
+
+	// MetricType + Namespace + MetricName + MetricID
 	m.base.putUint8(uint8(metricType))
 	m.base.putString(namespace)
 	m.base.putString(metricName)
@@ -102,6 +124,8 @@ func (m *metricMetaWAL) AppendField(metricID uint32, fID field.ID, fieldName fie
 	if err := m.base.checkPage(len(fieldName) + fieldBaseLength); err != nil {
 		return err
 	}
+
+	// FieldType + MetricID + FieldID + FieldName + FieldType
 	m.base.putUint8(uint8(fieldType))
 	m.base.putUint32(metricID)
 	m.base.putUint8(uint8(fID))
@@ -115,6 +139,8 @@ func (m *metricMetaWAL) AppendTagKey(metricID uint32, tagKeyID uint32, tagKey st
 	if err := m.base.checkPage(len(tagKey) + tagKeyBaseLength); err != nil {
 		return err
 	}
+
+	// TagKeyType + MetricID + TagKeyID + TagKey
 	m.base.putUint8(uint8(tagKeyType))
 	m.base.putUint32(metricID)
 	m.base.putUint32(tagKeyID)
@@ -128,22 +154,39 @@ func (m *metricMetaWAL) NeedRecovery() bool {
 }
 
 // Recovery recoveries wal log, then writes data via recovery function
-func (m *metricMetaWAL) Recovery(metricRecovery MetricRecoveryFunc,
+func (m *metricMetaWAL) Recovery(
+	metricRecovery MetricRecoveryFunc,
 	fieldRecovery FieldRecoveryFunc,
 	tagKeyRecovery TagKeyRecoveryFunc,
 	commit CommitFunc) {
+
+	// 取当前页
 	current := m.base.pageIndex.Load()
+
+	// 取提交页
 	committed := m.base.commitPageIndex.Load()
+
+	// 遍历 [commitPage, currPage] ，逐页 redo 。
 	for i := committed; i < current; i++ {
+
+		// 获取 Page
 		walPage, ok := m.base.walFactory.GetPage(i)
 		if !ok {
 			continue
 		}
+
+		//
 		offset := 0
 		completed := false
+
+
 		for !completed {
+
+			// 读取 MetaType(1B)
 			mType := metaType(walPage.ReadUint8(offset))
 			offset++
+
+			// 根据 MetaType 做不同处理
 			switch mType {
 			case metricType: // recovery metric
 				ns, n := readString(walPage, offset)
@@ -152,11 +195,10 @@ func (m *metricMetaWAL) Recovery(metricRecovery MetricRecoveryFunc,
 				offset += n
 				metricID := walPage.ReadUint32(offset)
 				offset += 4
+				// 恢复 metric
 				if err := metricRecovery(ns, metricName, metricID); err != nil {
 					recoverMetricFailCounter.Incr()
-
-					walLogger.Error("invoke metric recovery func error",
-						logger.String("wal", m.base.path), logger.Error(err))
+					walLogger.Error("invoke metric recovery func error", logger.String("wal", m.base.path), logger.Error(err))
 					return
 				}
 			case fieldType: // recovery field
@@ -168,11 +210,10 @@ func (m *metricMetaWAL) Recovery(metricRecovery MetricRecoveryFunc,
 				offset += n
 				fType := walPage.ReadUint8(offset)
 				offset++
+				// 恢复 field
 				if err := fieldRecovery(metricID, field.ID(fID), field.Name(fieldName), field.Type(fType)); err != nil {
 					recoverFieldFailCounter.Incr()
-
-					walLogger.Error("invoke field recovery func error",
-						logger.String("wal", m.base.path), logger.Error(err))
+					walLogger.Error("invoke field recovery func error", logger.String("wal", m.base.path), logger.Error(err))
 					return
 				}
 			case tagKeyType: // recovery tag key
@@ -182,11 +223,10 @@ func (m *metricMetaWAL) Recovery(metricRecovery MetricRecoveryFunc,
 				offset += 4
 				tagKey, n := readString(walPage, offset)
 				offset += n
+				// 恢复 tag
 				if err := tagKeyRecovery(metricID, tagKeyID, tagKey); err != nil {
 					recoverTagKeyFailCounter.Incr()
-
-					walLogger.Error("invoke tag key recovery func error",
-						logger.String("wal", m.base.path), logger.Error(err))
+					walLogger.Error("invoke tag key recovery func error",logger.String("wal", m.base.path), logger.Error(err))
 					return
 				}
 			default:
@@ -194,6 +234,7 @@ func (m *metricMetaWAL) Recovery(metricRecovery MetricRecoveryFunc,
 			}
 		}
 
+		// 完成 redo ，执行提交
 		if err := commit(); err != nil {
 			recoveryCommitFailCounter.Incr()
 
@@ -202,13 +243,14 @@ func (m *metricMetaWAL) Recovery(metricRecovery MetricRecoveryFunc,
 			return
 		}
 
+		// 释放当前页
 		if err := m.base.walFactory.ReleasePage(i); err != nil {
 			releaseWALPageFailCounter.Incr()
-
 			walLogger.Error("release meta wal page error",
 				logger.String("wal", m.base.path), logger.Error(err))
 		}
 
+		// 递增已提交页索引
 		m.base.commitPageIndex.Inc()
 	}
 }

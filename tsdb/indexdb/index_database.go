@@ -67,8 +67,11 @@ type indexDatabase struct {
 	backend          IDMappingBackend           // id mapping backend storage
 	metricID2Mapping map[uint32]MetricIDMapping // key: metric id, value: metric id mapping
 	metadata         metadb.Metadata            // the metadata for generating ID of metric, field
-	index            InvertedIndex
 
+	// 倒排索引
+	index InvertedIndex
+
+	// WAL 日志
 	seriesWAL wal.SeriesWAL
 
 	syncInterval int64
@@ -77,10 +80,21 @@ type indexDatabase struct {
 }
 
 // NewIndexDatabase creates a new index database
-func NewIndexDatabase(ctx context.Context, parent string, metadata metadb.Metadata,
-	forwardFamily kv.Family, invertedFamily kv.Family,
-) (IndexDatabase, error) {
+// 创建索引数据库
+func NewIndexDatabase(
+	ctx context.Context,
+	parent string,
+	metadata metadb.Metadata,
+	forwardFamily kv.Family,
+	invertedFamily kv.Family,
+) (
+	IndexDatabase,
+	error,
+) {
+
 	var err error
+
+	// 创建 boltdb 数据库
 	backend, err := createBackend(parent)
 	if err != nil {
 		return nil, err
@@ -89,37 +103,49 @@ func NewIndexDatabase(ctx context.Context, parent string, metadata metadb.Metada
 		// if init index database err, need close backend
 		if err != nil {
 			if err1 := backend.Close(); err1 != nil {
-				indexLogger.Info("close series id mapping backend error when init index database",
-					logger.String("db", parent), logger.Error(err))
+				indexLogger.Info("close series id mapping backend error when init index database", logger.String("db", parent), logger.Error(err))
 			}
 		}
 	}()
+
+	// 从 "parent/wal/series" 目录加载 series wal log
 	seriesWAL, err := createSeriesWAL(filepath.Join(parent, walPath, seriesWALPath))
 	if err != nil {
 		return nil, err
 	}
+
 	c, cancel := context.WithCancel(ctx)
 	db := &indexDatabase{
-		path:             parent,
-		ctx:              c,
-		cancel:           cancel,
-		backend:          backend,
-		metadata:         metadata,
+		path:    parent,
+		ctx:     c,
+		cancel:  cancel,
+		backend: backend,
+
+		//
+		metadata: metadata,
+
+		// 缓存 MetricId => Mapping 的映射。
 		metricID2Mapping: make(map[uint32]MetricIDMapping),
-		index:            newInvertedIndex(metadata, forwardFamily, invertedFamily),
-		seriesWAL:        seriesWAL,
-		syncInterval:     syncInterval,
+
+		// 索引
+		index: newInvertedIndex(metadata, forwardFamily, invertedFamily),
+
+		seriesWAL:    seriesWAL,
+		syncInterval: syncInterval,
 	}
 
 	// series recovery
+	// 执行 recovery 将 wal 中数据同步到 boltdb 。
 	db.seriesRecovery()
 
 	// if recovery series wal fail, need return err
+	// 执行 recovery 失败，报错
 	if db.seriesWAL.NeedRecovery() {
 		err = ErrNeedRecoveryWAL
 		return nil, err
 	}
 
+	// 启动定时任务，定时将 wal 同步到 boltdb 。
 	go db.checkSync()
 
 	return db, nil
@@ -140,32 +166,42 @@ func (db *indexDatabase) GetGroupingContext(tagKeyIDs []uint32, seriesIDs *roari
 // if generate fail return err
 func (db *indexDatabase) GetOrCreateSeriesID(metricID uint32, tagsHash uint64,
 ) (seriesID uint32, isCreated bool, err error) {
+
 	db.rwMutex.Lock()
 	defer db.rwMutex.Unlock()
 
+	// 从缓存中查询 metricId 的 mapping
 	metricIDMapping, ok := db.metricID2Mapping[metricID]
 	if ok {
 		// get series id from memory cache
+		// 查询 tagsHash 对应的 seriesID
 		seriesID, ok = metricIDMapping.GetSeriesID(tagsHash)
 		if ok {
 			return seriesID, false, nil
 		}
 	} else {
 		// metric mapping not exist, need load from backend storage
+		// 从磁盘 boltdb 中查询 metricId 的 mapping
 		metricIDMapping, err = db.backend.loadMetricIDMapping(metricID)
 		if err != nil && !errors.Is(err, constants.ErrNotFound) {
 			return 0, false, err
 		}
+
 		// if metric id not exist in backend storage
+		// 不存在则新建
 		if errors.Is(err, constants.ErrNotFound) {
 			// create new metric id mapping with 0 sequence
 			metricIDMapping = newMetricIDMapping(metricID, 0)
 			// cache metric id mapping
+			// 更新缓存
 			db.metricID2Mapping[metricID] = metricIDMapping
 		} else {
 			// cache metric id mapping
+			// 更新缓存
 			db.metricID2Mapping[metricID] = metricIDMapping
+
 			// metric id mapping exist, try get series id from backend storage
+			// 从磁盘 boltdb 中查询 metricId, tagsHash 对应的 seriesID
 			seriesID, err = db.backend.getSeriesID(metricID, tagsHash)
 			if err == nil {
 				// cache load series id
@@ -174,19 +210,24 @@ func (db *indexDatabase) GetOrCreateSeriesID(metricID uint32, tagsHash uint64,
 			}
 		}
 	}
+
 	// throw err in backend storage
 	if err != nil && !errors.Is(err, constants.ErrNotFound) {
 		return 0, false, err
 	}
+
 	// generate new series id
+	// 根据 tagsHash 生成 seriesID 。
 	seriesID = metricIDMapping.GenSeriesID(tagsHash)
 
 	// append to wal
+	// 写 wal 日志
 	if err = db.seriesWAL.Append(metricID, tagsHash, seriesID); err != nil {
 		// if append wal fail, need rollback assigned series id, then returns err
 		metricIDMapping.RemoveSeriesID(tagsHash)
 		return 0, false, err
 	}
+
 	return seriesID, true, nil
 }
 
@@ -227,6 +268,8 @@ func (db *indexDatabase) BuildInvertIndex(
 	tagIterator *metric.KeyValueIterator,
 	seriesID uint32,
 ) {
+
+	//
 	db.index.buildInvertIndex(namespace, metricName, tagIterator, seriesID)
 
 	buildInvertedIndexCounterVec.WithTagValues(db.metadata.DatabaseName()).Incr()
@@ -249,8 +292,7 @@ func (db *indexDatabase) Close() error {
 	defer db.rwMutex.Unlock()
 
 	if err := db.seriesWAL.Close(); err != nil {
-		indexLogger.Error("sync series wal err when close index database",
-			logger.String("db", db.path), logger.Error(err))
+		indexLogger.Error("sync series wal err when close index database", logger.String("db", db.path), logger.Error(err))
 	}
 	if err := db.backend.Close(); err != nil {
 		return err
@@ -276,17 +318,23 @@ func (db *indexDatabase) checkSync() {
 }
 
 // seriesRecovery recovers series wal data
+//
+// 解析 wal 将新数据同步到 boltdb 。
 func (db *indexDatabase) seriesRecovery() {
+
 	startTime := time.Now()
 	defer recoverySeriesWALTimerVec.WithTagValues(db.metadata.DatabaseName()).UpdateSince(startTime)
 
 	event := newMappingEvent()
+
 	db.seriesWAL.Recovery(func(metricID uint32, tagsHash uint64, seriesID uint32) error {
 		event.addSeriesID(metricID, tagsHash, seriesID)
 		if event.isFull() {
+			// 保存到 boltdb
 			if err := db.backend.saveMapping(event); err != nil {
 				return err
 			}
+			// 重置
 			event = newMappingEvent()
 		}
 		return nil

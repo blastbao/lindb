@@ -78,6 +78,8 @@ type factory struct {
 // NewFactory creates page factory based on page size
 func NewFactory(path string, pageSize int) (Factory, error) {
 	var err error
+
+	// 页目录存在
 	if err = mkDirFunc(path); err != nil {
 		return nil, err
 	}
@@ -95,6 +97,7 @@ func NewFactory(path string, pageSize int) (Factory, error) {
 		}
 	}()
 
+	// 加载页
 	if err = f.loadPages(); err != nil {
 		return nil, err
 	}
@@ -111,19 +114,21 @@ func (f *factory) AcquirePage(index int64) (MappedPage, error) {
 		return nil, errFactoryClosed
 	}
 
+	// 获取缓存页
 	page, ok := f.pages[index]
 	if ok {
 		return page, nil
 	}
 
+	// 加载磁盘页
 	page, err := NewMappedPage(f.pageFileName(index), f.pageSize)
 	if err != nil {
 		return nil, err
 	}
 
+	// 缓存新页
 	f.pages[index] = page
 	f.size.Add(int64(f.pageSize))
-
 	return page, nil
 }
 
@@ -198,21 +203,26 @@ func (f *factory) pageFileName(index int64) string {
 
 // loadPages loads the exist pages when factory init
 func (f *factory) loadPages() error {
+
+	// 获取文件列表
 	fileNames, err := listDirFunc(f.path)
 	if err != nil {
 		return err
 	}
+
 	if len(fileNames) == 0 {
 		// page file not exist
 		return nil
 	}
 
 	for _, fn := range fileNames {
+		// 页号
 		seqNumStr := fn[0 : strings.Index(fn, pageSuffix)-1]
 		seq, err := strconv.ParseInt(seqNumStr, 10, 64)
 		if err != nil {
 			return err
 		}
+		// 加载页号
 		_, err = f.AcquirePage(seq)
 		if err != nil {
 			return err

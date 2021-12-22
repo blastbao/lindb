@@ -240,15 +240,19 @@ func (w *writeAheadLog) GetOrCreatePartition(
 	familyTime int64,
 	leader models.NodeID,
 ) (Partition, error) {
+
+
 	key := partitionKey{
 		shardID:    shardID,
 		familyTime: familyTime,
 		leader:     leader,
 	}
+
 	p, ok := w.getPartition(key)
 	if ok {
 		return p, nil
 	}
+
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 

@@ -50,24 +50,32 @@ var (
 
 // InvertedIndex represents the tag's inverted index (tag values => series id list)
 type InvertedIndex interface {
+
 	// GetSeriesIDsByTagValueIDs gets series ids by tag value ids for spec metric's tag key
 	GetSeriesIDsByTagValueIDs(tagKeyID uint32, tagValueIDs *roaring.Bitmap) (*roaring.Bitmap, error)
+
 	// GetSeriesIDsForTag gets series ids for spec metric's tag key
 	GetSeriesIDsForTag(tagKeyID uint32) (*roaring.Bitmap, error)
+
 	// GetSeriesIDsForTags gets series ids for spec metric's tag keys
 	GetSeriesIDsForTags(tagKeyIDs []uint32) (*roaring.Bitmap, error)
+
 	// GetGroupingContext returns the context of group by
 	GetGroupingContext(tagKeyIDs []uint32, seriesIDs *roaring.Bitmap) (series.GroupingContext, error)
+
 	// buildInvertIndex builds the inverted index for tag value => series ids,
 	// the tags is considered as a empty key-value pair while tags is nil.
 	buildInvertIndex(namespace, metricName string, tagIterator *metric.KeyValueIterator, seriesID uint32)
+
 	// Flush flushes the inverted-index of tag value id=>series ids under tag key
 	Flush() error
 }
 
 type invertedIndex struct {
+
 	invertedFamily kv.Family // store tag value inverted index(tag value id=> series ids)
 	forwardFamily  kv.Family // store tag value forward index(series id=>tag value id)
+
 	metadata       metadb.Metadata
 
 	mutable   *TagIndexStore
@@ -91,8 +99,13 @@ func newInvertedIndex(metadata metadb.Metadata, forwardFamily kv.Family, inverte
 
 // GetSeriesIDsByTagValueIDs finds series ids by tag filter expr
 func (index *invertedIndex) GetSeriesIDsByTagValueIDs(tagKeyID uint32, tagValueIDs *roaring.Bitmap) (*roaring.Bitmap, error) {
+
+	// 新建 bitmap 位图
 	result := roaring.New()
+
 	// read data from mem
+	//
+	//
 	index.loadSeriesIDsInMem(tagKeyID, func(tagIndex TagIndex) {
 		seriesIDs := tagIndex.getSeriesIDsByTagValueIDs(tagValueIDs)
 		if seriesIDs != nil {
@@ -111,6 +124,7 @@ func (index *invertedIndex) GetSeriesIDsByTagValueIDs(tagKeyID uint32, tagValueI
 	}); err != nil {
 		return nil, err
 	}
+
 	return result, nil
 }
 
@@ -124,19 +138,30 @@ func (index *invertedIndex) GetSeriesIDsForTag(tagKeyID uint32) (*roaring.Bitmap
 
 // getSeriesIDsForTag get series ids by tagKeyId and kv snapshot
 func (index *invertedIndex) getSeriesIDsForTag(tagKeyID uint32, snapshot version.Snapshot) (*roaring.Bitmap, error) {
+
 	result := roaring.New()
+
 	// read data from mem
+	//
+	// 根据 tagKeyID 查询 tagIndex ，然后取出 tagIndex 所含的所有 SeriesIDs 并汇总。
 	index.loadSeriesIDsInMem(tagKeyID, func(tagIndex TagIndex) {
-		result.Or(tagIndex.getAllSeriesIDs())
+		// 获取所有 seriesIDs
+		allSeriesIDs := tagIndex.getAllSeriesIDs()
+		// 求并集，汇总结果
+		result.Or(allSeriesIDs)
 	})
+
 
 	// read data from kv store
 	// try get tag key id from kv store
+	//
+	//
 	readers, err := snapshot.FindReaders(tagKeyID)
 	if err != nil {
 		// find table.Reader err, return it
 		return nil, err
 	}
+
 	var reader tagindex.ForwardReader
 
 	if len(readers) > 0 {
@@ -148,6 +173,7 @@ func (index *invertedIndex) getSeriesIDsForTag(tagKeyID uint32, snapshot version
 		}
 		result.Or(seriesIDs)
 	}
+
 	return result, nil
 }
 
@@ -225,39 +251,56 @@ func (index *invertedIndex) getGroupingScanners(
 // buildInvertIndex builds the inverted index for tag value => series ids,
 // the tags is considered as a empty key-value pair while tags is nil.
 func (index *invertedIndex) buildInvertIndex(namespace, metricName string, tagIterator *metric.KeyValueIterator, seriesID uint32) {
+
 	index.rwMutex.Lock()
 	defer index.rwMutex.Unlock()
+
 
 	metadataDB := index.metadata.MetadataDatabase()
 	tagMetadata := index.metadata.TagMetadata()
 
+
+	// 遍历所有 tag
 	for tagIterator.HasNext() {
+
+		//
 		tagKey := string(tagIterator.NextKey())
 		tagValue := string(tagIterator.NextValue())
 
+		// 查询 tagKeyID
 		tagKeyID, err := metadataDB.GenTagKeyID(namespace, metricName, tagKey)
 		if err != nil {
 			index.genTagKeyFailCounter.Incr()
-
 			indexLogger.Error("gen tag key id fail, ignore index build for this tag key",
-				logger.String("namespace", namespace), logger.String("metric", metricName),
-				logger.String("key", tagKey), logger.Error(err))
+				logger.String("namespace", namespace),
+				logger.String("metric", metricName),
+				logger.String("key", tagKey),
+				logger.Error(err),
+			)
 			continue
 		}
+
+		// 查询 tagIndex
 		tagIndex, ok := index.mutable.Get(tagKeyID)
 		if !ok {
 			tagIndex = newTagIndex()
 			index.mutable.Put(tagKeyID, tagIndex)
 		}
+
+		//
 		tagValueID, err := tagMetadata.GenTagValueID(tagKeyID, tagValue)
 		if err != nil {
 			index.genTagValueFailCounter.Incr()
-
 			indexLogger.Error("gen tag value id fail, ignore index build for this tag key",
-				logger.String("namespace", namespace), logger.String("metric", metricName),
-				logger.String("tagKey", tagKey), logger.String("tagValue", tagValue), logger.Error(err))
+				logger.String("namespace", namespace),
+				logger.String("metric", metricName),
+				logger.String("tagKey", tagKey),
+				logger.String("tagValue", tagValue),
+				logger.Error(err))
 			continue
 		}
+
+		//
 		tagIndex.buildInvertedIndex(tagValueID, seriesID)
 	}
 }
@@ -342,9 +385,14 @@ func (index *invertedIndex) loadSeriesIDsInKV(tagKeyID uint32, fn func(reader ta
 
 // loadSeriesIDsInMem loads series ids from mutable/immutable store
 func (index *invertedIndex) loadSeriesIDsInMem(tagKeyID uint32, fn func(tagIndex TagIndex)) {
+
 	// define get tag series ids func
+	//
+	//
 	getSeriesIDsIDs := func(tagIndexStore *TagIndexStore) {
+		// 根据 tagKeyID 查询 tagIndex
 		tag, ok := tagIndexStore.Get(tagKeyID)
+		// 如果存在，则执行 fn 回调
 		if ok {
 			fn(tag)
 		}
@@ -354,7 +402,10 @@ func (index *invertedIndex) loadSeriesIDsInMem(tagKeyID uint32, fn func(tagIndex
 	index.rwMutex.RLock()
 	defer index.rwMutex.RUnlock()
 
+	//
 	getSeriesIDsIDs(index.mutable)
+
+	//
 	if index.immutable != nil {
 		getSeriesIDsIDs(index.immutable)
 	}

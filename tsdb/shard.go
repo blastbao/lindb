@@ -84,8 +84,10 @@ type Shard interface {
 	Path() string
 	// CurrentInterval returns current interval for metric write.
 	CurrentInterval() timeutil.Interval
+
 	// Indicator returns the unique shard info.
 	Indicator() string
+
 	// GetOrCrateDataFamily returns data family, if not exist create a new data family.
 	GetOrCrateDataFamily(familyTime int64) (DataFamily, error)
 	// GetDataFamilies returns data family list by interval type and time range, return nil if not match
@@ -93,6 +95,7 @@ type Shard interface {
 	// IndexDatabase returns the index-database
 	IndexDatabase() indexdb.IndexDatabase
 	BufferManager() memdb.BufferManager
+
 	// WriteRows writes metric rows with same family in batch
 	WriteRows(rows []metric.StorageRow) error
 
@@ -111,12 +114,18 @@ type Shard interface {
 //    xx/shard/1/index/inverted/
 //    xx/shard/1/data/20191012/
 //    xx/shard/1/data/20191013/
+//
+//
+//
 type shard struct {
+
+	// 基础字段
 	db     Database
 	id     models.ShardID
 	path   string
 	option option.DatabaseOption
 
+	//
 	bufferMgr memdb.BufferManager
 	indexDB   indexdb.IndexDatabase
 	metadata  metadb.Metadata
@@ -149,15 +158,19 @@ func newShard(
 	option option.DatabaseOption,
 ) (Shard, error) {
 	var err error
+	// 参数校验
 	if err = option.Validate(); err != nil {
 		return nil, fmt.Errorf("engine option is invalid, err: %s", err)
 	}
 	var interval timeutil.Interval
 	_ = interval.ValueOf(option.Interval)
 
+	// 确保数据路径存在
 	if err := mkDirIfNotExist(shardPath); err != nil {
 		return nil, err
 	}
+
+
 	createdShard := &shard{
 		db:         db,
 		id:         shardID,
@@ -170,7 +183,9 @@ func newShard(
 		isFlushing: *atomic.NewBool(false),
 		logger:     logger.GetLogger("tsdb", "Shard"),
 	}
-	//try cleanup history dirty write buffer
+
+
+	// try cleanup history dirty write buffer
 	createdShard.bufferMgr.Cleanup()
 
 	// initialize metrics
@@ -182,11 +197,12 @@ func newShard(
 	createdShard.segment, err = newIntervalSegmentFunc(
 		createdShard,
 		interval,
-		filepath.Join(shardPath, segmentDir, interval.Type().String()))
-
+		filepath.Join(shardPath, segmentDir, interval.Type().String()),
+	)
 	if err != nil {
 		return nil, err
 	}
+
 	// add writing segment into segment list
 	createdShard.segments[interval.Type()] = createdShard.segment
 
@@ -201,9 +217,12 @@ func newShard(
 				logger.String("shard", createdShard.path), logger.Error(err))
 		}
 	}()
+
+
 	if err = createdShard.initIndexDatabase(); err != nil {
 		return nil, fmt.Errorf("create index database for shard[%d] error: %s", shardID, err)
 	}
+
 	return createdShard, nil
 }
 
@@ -218,12 +237,18 @@ func (s *shard) Path() string {
 }
 
 // ShardInfo returns the unique shard info.
-func (s *shard) Indicator() string { return s.path }
+func (s *shard) Indicator() string {
+	return s.path
+}
 
 // CurrentInterval returns current interval for metric  write.
-func (s *shard) CurrentInterval() timeutil.Interval { return s.interval }
+func (s *shard) CurrentInterval() timeutil.Interval {
+	return s.interval
+}
 
-func (s *shard) IndexDatabase() indexdb.IndexDatabase { return s.indexDB }
+func (s *shard) IndexDatabase() indexdb.IndexDatabase {
+	return s.indexDB
+}
 
 func (s *shard) BufferManager() memdb.BufferManager {
 	return s.bufferMgr
@@ -411,35 +436,49 @@ func (s *shard) Flush() (err error) {
 
 // initIndexDatabase initializes the index database
 func (s *shard) initIndexDatabase() error {
+
 	var err error
 	storeOption := kv.DefaultStoreOption(filepath.Join(s.path, indexParentDir))
+
+
 	s.indexStore, err = newKVStoreFunc(storeOption.Path, storeOption)
 	if err != nil {
 		return err
 	}
+
+
+	// 正排索引
 	s.forwardFamily, err = s.indexStore.CreateFamily(
 		forwardIndexDir,
 		kv.FamilyOption{
 			CompactThreshold: 0,
-			Merger:           string(tagindex.SeriesForwardMerger)})
+			Merger:           string(tagindex.SeriesForwardMerger),
+		})
 	if err != nil {
 		return err
 	}
+
+	// 倒排索引
 	s.invertedFamily, err = s.indexStore.CreateFamily(
 		invertedIndexDir,
 		kv.FamilyOption{
 			CompactThreshold: 0,
-			Merger:           string(tagindex.SeriesInvertedMerger)})
+			Merger:           string(tagindex.SeriesInvertedMerger),
+		})
 	if err != nil {
 		return err
 	}
+
+
 	s.indexDB, err = newIndexDBFunc(
 		context.TODO(),
-		filepath.Join(s.path, metaDir),
-		s.metadata, s.forwardFamily,
-		s.invertedFamily)
+		filepath.Join(s.path, metaDir),	// 目录：path/meta
+		s.metadata,						// 元数据
+		s.forwardFamily,				// 正排索引
+		s.invertedFamily)				// 倒排索引
 	if err != nil {
 		return err
 	}
+
 	return nil
 }

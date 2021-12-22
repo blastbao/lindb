@@ -102,10 +102,12 @@ func newFamily(store Store, option FamilyOption) (Family, error) {
 			return nil, fmt.Errorf("mkdir family path error:%w", err)
 		}
 	}
+
 	merger, ok := mergers[MergerType(option.Merger)]
 	if !ok {
 		return nil, fmt.Errorf("merger of option not impelement Merger interface, merger is [%s]", option.Merger)
 	}
+
 	maxFileSize := defaultMaxFileSize
 	if option.MaxFileSize > 0 {
 		maxFileSize = option.MaxFileSize

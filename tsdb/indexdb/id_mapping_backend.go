@@ -50,12 +50,20 @@ var (
 
 // IDMappingBackend represents the id mapping backend storage,
 // save series data(tags hash => series id) under metric
+//
+//
 type IDMappingBackend interface {
 	io.Closer
+
 	// loadMetricIDMapping loads metric id mapping include id sequence
+	//
 	loadMetricIDMapping(metricID uint32) (idMapping MetricIDMapping, err error)
+
+
 	// getSeriesID gets series id by metric id/tags hash, if not exist return constants.ErrNotFount
 	getSeriesID(metricID uint32, tagsHash uint64) (seriesID uint32, err error)
+
+
 	// saveMapping saves the id mapping event
 	saveMapping(event *mappingEvent) (err error)
 }
@@ -67,45 +75,52 @@ type idMappingBackend struct {
 
 // newIDMappingBackend creates new id mapping backend storage
 func newIDMappingBackend(parent string) (IDMappingBackend, error) {
+
+	// 创建目录
 	if err := mkDir(parent); err != nil {
 		return nil, err
 	}
+
+	// 打开 parent/mapping.db 文件
 	db, err := bbolt.Open(path.Join(parent, MappingDB), 0600, &bbolt.Options{Timeout: 1 * time.Second, NoSync: true})
 	if err != nil {
 		return nil, err
 	}
 
-	err = db.Update(func(tx *bbolt.Tx) error {
+	// 创建 bucket "s"
+	if err = db.Update(func(tx *bbolt.Tx) error {
 		// create series root bucket for save metric's id mapping
 		_, err := tx.CreateBucketIfNotExists(seriesBucketName)
 		if err != nil {
 			return err
 		}
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		// close bbolt.DB if init mapping backend err
 		if e := closeFunc(db); e != nil {
-			indexLogger.Error("close bbolt.db err when create mapping backend fail",
-				logger.String("db", parent), logger.Error(e))
+			indexLogger.Error("close bbolt.db err when create mapping backend fail", logger.String("db", parent), logger.Error(e))
 		}
 		return nil, err
 	}
+
 	return &idMappingBackend{
 		db: db,
 	}, nil
 }
 
 // loadMetricIDMapping loads metric id mapping include id sequence
+// 根据 metricId 加载 <metricID, sequence>
 func (imb *idMappingBackend) loadMetricIDMapping(metricID uint32) (idMapping MetricIDMapping, err error) {
 	var sequence uint32
 	var scratch [4]byte
 	binary.LittleEndian.PutUint32(scratch[:], metricID)
 	err = imb.db.View(func(tx *bbolt.Tx) error {
+		// 查询 metricId 的 bucket
 		metricBucket := tx.Bucket(seriesBucketName).Bucket(scratch[:])
 		if metricBucket == nil {
 			return fmt.Errorf("%w, metricID: %d", constants.ErrMetricBucketNotFound, metricID)
 		}
+		// 获取 sequence
 		sequence = uint32(metricBucket.Sequence())
 		return nil
 	})
@@ -117,15 +132,20 @@ func (imb *idMappingBackend) loadMetricIDMapping(metricID uint32) (idMapping Met
 }
 
 // getSeriesID gets series id by metric id/tags hash, if not exist return constants.ErrNotFount
+//
+// 根据 metricId, tagsHash 获取 seriesID
 func (imb *idMappingBackend) getSeriesID(metricID uint32, tagsHash uint64) (seriesID uint32, err error) {
 	var scratch [4]byte
 	binary.LittleEndian.PutUint32(scratch[:], metricID)
 	err = imb.db.View(func(tx *bbolt.Tx) error {
+		// 查询 metricId 的 bucket
 		metricBucket := tx.Bucket(seriesBucketName).Bucket(scratch[:])
 		if metricBucket == nil {
 			return fmt.Errorf("%w, metricID: %d, tagsHash: %d",
 				constants.ErrMetricBucketNotFound, metricID, tagsHash)
 		}
+
+		// 查询 tagHash 的 seriesID
 		var hash [8]byte
 		binary.LittleEndian.PutUint64(hash[:], tagsHash)
 		value := metricBucket.Get(hash[:])
@@ -133,6 +153,7 @@ func (imb *idMappingBackend) getSeriesID(metricID uint32, tagsHash uint64) (seri
 			return fmt.Errorf("%w, metricID: %d, tagsHash: %d",
 				constants.ErrSeriesIDNotFound, metricID, tagsHash)
 		}
+
 		seriesID = binary.LittleEndian.Uint32(value)
 		return nil
 	})
@@ -142,29 +163,40 @@ func (imb *idMappingBackend) getSeriesID(metricID uint32, tagsHash uint64) (seri
 // saveMapping saves the id mapping event
 func (imb *idMappingBackend) saveMapping(event *mappingEvent) (err error) {
 	err = imb.db.Update(func(tx *bbolt.Tx) error {
+
 		for metricID, metricEvent := range event.events {
+
+			// MetricID
 			var scratch [4]byte
 			binary.LittleEndian.PutUint32(scratch[:], metricID)
 			id := scratch[:]
 			root := tx.Bucket(seriesBucketName)
+
+			// 查询 metricId 的 bucket
 			metricBucket := root.Bucket(id)
 			if metricBucket == nil {
 				// create metric bucket if metric id not exist
+				// 创建 bucket 如果不存在
 				metricBucket, err = createBucketFunc(root, id)
 				if err != nil {
 					return err
 				}
 			}
+
 			// save series data
 			for _, seriesEvent := range metricEvent.events {
+
 				var seriesID [4]byte
 				var hash [8]byte
 				binary.LittleEndian.PutUint64(hash[:], seriesEvent.tagsHash)
 				binary.LittleEndian.PutUint32(seriesID[:], seriesEvent.seriesID)
+
+				// 把 Pair<tagHash, seriesId> 插入到 bucket 中
 				if err = putFunc(metricBucket, hash[:], seriesID[:]); err != nil {
 					return err
 				}
 			}
+
 			// save metric id sequence
 			if err = setSequenceFunc(metricBucket, uint64(metricEvent.metricIDSeq)); err != nil {
 				return err

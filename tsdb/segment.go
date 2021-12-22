@@ -72,17 +72,21 @@ func newSegment(
 	Segment,
 	error,
 ) {
+
 	// parse base time from segment name
 	calc := interval.Calculator()
 	baseTime, err := calc.ParseSegmentTime(segmentName)
 	if err != nil {
 		return nil, fmt.Errorf("parse segment[%s] base time error", path)
 	}
+
 	kvStore, err := newStore(segmentName, kv.DefaultStoreOption(path))
 	if err != nil {
 		return nil, fmt.Errorf("create kv store for segment error:%s", err)
 	}
+
 	familyNames := kvStore.ListFamilyNames()
+
 	s := &segment{
 		shard:    shard,
 		baseTime: baseTime,
@@ -90,6 +94,7 @@ func newSegment(
 		interval: interval,
 		logger:   logger.GetLogger("tsdb", "Segment"),
 	}
+
 	for _, familyName := range familyNames {
 		familyTime, err := strconv.Atoi(familyName)
 		if err != nil {
@@ -97,6 +102,7 @@ func newSegment(
 		}
 		_ = s.initDataFamily(familyTime, kvStore.GetFamily(familyName))
 	}
+
 	return s, nil
 }
 
@@ -107,6 +113,7 @@ func (s *segment) BaseTime() int64 {
 
 // GetDataFamilies returns data family list by time range, return nil if not match
 func (s *segment) getDataFamilies(timeRange timeutil.TimeRange) []DataFamily {
+
 	var result []DataFamily
 	calc := s.interval.Calculator()
 
@@ -114,6 +121,7 @@ func (s *segment) getDataFamilies(timeRange timeutil.TimeRange) []DataFamily {
 		Start: calc.CalcFamilyStartTime(s.baseTime, calc.CalcFamily(timeRange.Start, s.baseTime)),
 		End:   calc.CalcFamilyStartTime(s.baseTime, calc.CalcFamily(timeRange.End, s.baseTime)),
 	}
+
 	s.families.Range(func(k, v interface{}) bool {
 		family, ok := v.(DataFamily)
 		if ok {
@@ -124,6 +132,7 @@ func (s *segment) getDataFamilies(timeRange timeutil.TimeRange) []DataFamily {
 		}
 		return true
 	})
+
 	return result
 }
 

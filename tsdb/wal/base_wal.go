@@ -51,33 +51,53 @@ type CommitFunc = func() error
 
 // baseWAL represents base write ahead log
 type baseWAL struct {
+
+	// 文件路径
 	path     string
+
+	// 页大小
 	pageSize int
 
+	// 页工厂
 	walFactory  page.Factory
+
+	// 当前页
 	currentPage page.MappedPage
 
+	// 当前页的写偏移
 	offset int
 
+	// 当前页的索引
 	pageIndex       atomic.Int64
+
+	// 已提交页的索引
 	commitPageIndex atomic.Int64
 }
 
 // newBaseWAL creates a new base write ahead log
 func newBaseWAL(path string, pageSize int) (*baseWAL, error) {
 	var err error
+
+	// 确保目录存在
 	if err = mkDirFunc(path); err != nil {
 		return nil, err
 	}
 
 	// init wal page factory
+	// 初始化页工厂，包含所有 wal 页面
 	fct, err := newPageFactoryFunc(path, pageSize)
 	if err != nil {
 		return nil, err
 	}
 
+	// 获取页列表
 	pageIDs := fct.GetPageIDs()
-	wal := &baseWAL{path: path, walFactory: fct, pageSize: pageSize}
+
+	wal := &baseWAL{
+		path: path,
+		walFactory: fct,
+		pageSize: pageSize,
+	}
 
 	defer func() {
 		if err != nil {
@@ -88,38 +108,51 @@ func newBaseWAL(path string, pageSize int) (*baseWAL, error) {
 		}
 	}()
 
+	// 设置已提交页、当前页的索引
 	if len(pageIDs) > 0 {
 		wal.commitPageIndex.Store(pageIDs[0] - 1)
 		wal.pageIndex.Store(pageIDs[len(pageIDs)-1])
 	}
 
 	// acquire new page for appending series data
+	// 获取新页作为当前页
 	if wal.currentPage, err = wal.walFactory.AcquirePage(wal.pageIndex.Load() + 1); err != nil {
 		return nil, err
 	}
 	wal.pageIndex.Inc()
 
+
 	return wal, nil
 }
 
 func (wal *baseWAL) checkPage(length int) error {
+
 	// prepare the data pointer
+	// 检查是否写满
 	if wal.offset+length > wal.pageSize {
+
 		// sync previous data page
+		// 落盘
 		if err := wal.currentPage.Sync(); err != nil {
-			walLogger.Error("sync data page err when alloc",
-				logger.String("wal", wal.path), logger.Error(err))
+			walLogger.Error("sync data page err when alloc", logger.String("wal", wal.path), logger.Error(err))
 		}
 
 		// not enough space in current data page, need create new page
+		// 获取新页
 		walPage, err := wal.walFactory.AcquirePage(wal.pageIndex.Load() + 1)
 		if err != nil {
 			return err
 		}
+
+		// 设置为当前页
 		wal.currentPage = walPage
 		wal.pageIndex.Inc()
+
+		// 重置页内偏移
 		wal.offset = 0 // need reset message offset for new page append
 	}
+
+
 	return nil
 }
 
@@ -151,11 +184,13 @@ func (wal *baseWAL) sync() error {
 }
 
 // close closes the wal log
+// 刷盘
 func (wal *baseWAL) close() error {
 	return wal.currentPage.Close()
 }
 
 // needRecovery checks if wal log need to recover
+// 检查是否需要 recovery 
 func (wal *baseWAL) needRecovery() bool {
 	return wal.pageIndex.Load()-wal.commitPageIndex.Load() > 1
 }

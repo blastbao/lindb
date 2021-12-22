@@ -105,48 +105,60 @@ type database struct {
 
 // newDatabase creates the database instance
 func newDatabase(
-	databaseName string,
-	databasePath string,
-	cfg *databaseConfig,
-	flushChecker DataFlushChecker,
+	databaseName string,				// 数据库名
+	databasePath string,				// 数据库存储目录
+	cfg *databaseConfig,				// 数据库配置
+	flushChecker DataFlushChecker,		// 检查函数
 ) (Database, error) {
+
+
 	db := &database{
+		// 基础字段
 		name:         databaseName,
 		path:         databasePath,
 		flushChecker: flushChecker,
 		config:       cfg,
+
+		// 数据分片
 		shardSet:     *newShardSet(),
+
+		// 协程池
 		executorPool: &ExecutorPool{
 			Filtering: concurrent.NewPool(
 				databaseName+"-filtering-pool",
 				runtime.GOMAXPROCS(-1), /*nRoutines*/
 				time.Second*5,
-				linmetric.NewScope("lindb.concurrent",
-					"pool_name", databaseName+"-filtering"),
+				linmetric.NewScope("lindb.concurrent", "pool_name", databaseName+"-filtering"),
 			),
 			Grouping: concurrent.NewPool(
 				databaseName+"-grouping-pool",
 				runtime.GOMAXPROCS(-1), /*nRoutines*/
 				time.Second*5,
-				linmetric.NewScope("lindb.concurrent",
-					"pool_name", databaseName+"-grouping"),
+				linmetric.NewScope("lindb.concurrent", "pool_name", databaseName+"-grouping"),
 			),
 			Scanner: concurrent.NewPool(
 				databaseName+"-scanner-pool",
 				runtime.GOMAXPROCS(-1), /*nRoutines*/
 				time.Second*5,
-				linmetric.NewScope("lindb.concurrent",
-					"pool_name", databaseName+"-scanner"),
+				linmetric.NewScope("lindb.concurrent", "pool_name", databaseName+"-scanner"),
 			),
 		},
+
+		// 正在刷盘标记
 		isFlushing: *atomic.NewBool(false),
 	}
+
+	// 保存配置到文件
 	if err := db.dumpDatabaseConfig(cfg); err != nil {
 		return nil, err
 	}
+
+	// 初始化元数据
 	if err := db.initMetadata(); err != nil {
 		return nil, err
 	}
+
+	// 异常处理
 	var err error
 	defer func() {
 		if err != nil && db.metadata != nil {
@@ -156,10 +168,14 @@ func newDatabase(
 			}
 		}
 	}()
+
+
 	// load families if engine is exist
+	// 加载分片
 	var shard Shard
 	if len(db.config.ShardIDs) > 0 {
 		for _, shardID := range db.config.ShardIDs {
+			// 创建分片
 			shard, err = newShardFunc(
 				db,
 				shardID,
@@ -169,6 +185,7 @@ func newDatabase(
 				return nil, fmt.Errorf("cannot create shard[%d] of database[%s] with error: %s",
 					shardID, databaseName, err)
 			}
+			// 保存分片
 			db.shardSet.InsertShard(shardID, shard)
 		}
 	}
@@ -285,7 +302,7 @@ func (db *database) dumpDatabaseConfig(newConfig *databaseConfig) error {
 // initMetadata initializes metadata backend storage
 func (db *database) initMetadata() error {
 	metaStoreOption := kv.DefaultStoreOption(filepath.Join(db.path, metaDir, tagMetaDir))
-	//FIXME close kv store if err??
+	// FIXME close kv store if err??
 	metaStore, err := newKVStoreFunc(metaStoreOption.Path, metaStoreOption)
 	if err != nil {
 		return err

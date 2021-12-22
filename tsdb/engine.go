@@ -46,10 +46,12 @@ var engineLogger = logger.GetLogger("tsdb", "Engine")
 
 // Engine represents a time series engine
 type Engine interface {
+
 	// createDatabase creates database instance by database's name
 	// return success when creating database's path successfully
 	// called when CreateShards without database created
 	createDatabase(databaseName string) (Database, error)
+
 	// CreateShards creates families for data partition by given options
 	// 1) dump engine option into local disk
 	// 2) create shard storage struct
@@ -58,15 +60,20 @@ type Engine interface {
 		databaseOption option.DatabaseOption,
 		shardIDs ...models.ShardID,
 	) error
+
 	// GetShard returns shard by given db and shard id
 	GetShard(databaseName string, shardID models.ShardID) (Shard, bool)
+
 	// GetDatabase returns the time series database by given name
 	GetDatabase(databaseName string) (Database, bool)
+
 	// FlushDatabase produces a signal to workers for flushing memory database by name
 	FlushDatabase(ctx context.Context, databaseName string) bool
+
 	// Close closes the cached time series databases
 	Close()
 }
+
 
 // engine implements Engine
 type engine struct {
@@ -80,10 +87,12 @@ type engine struct {
 // NewEngine creates an engine for manipulating the databases
 func NewEngine() (Engine, error) {
 	// create time series storage path
+	// 确保数据目录存在
 	if err := mkDirIfNotExist(config.GlobalStorageConfig().TSDB.Dir); err != nil {
 		return nil, fmt.Errorf("create time sereis storage path[%s] erorr: %s",
 			config.GlobalStorageConfig().TSDB.Dir, err)
 	}
+
 	e := &engine{
 		dbSet: *newDatabaseSet(),
 	}
@@ -91,22 +100,28 @@ func NewEngine() (Engine, error) {
 	e.dataFlushChecker = newDataFlushChecker(e.ctx)
 	e.dataFlushChecker.Start()
 
+	//
 	if err := e.load(); err != nil {
 		engineLogger.Error("load engine data error when create a new engine", logger.Error(err))
 		// close opened engine
 		e.Close()
 		return nil, err
 	}
+
 	return e, nil
 }
 
 // createDatabase creates database instance by database's name
 // return success when creating database's path successfully
 func (e *engine) createDatabase(databaseName string) (Database, error) {
+
+	// 数据库目录
 	dbPath := filepath.Join(config.GlobalStorageConfig().TSDB.Dir, databaseName)
 	if err := mkDirIfNotExist(dbPath); err != nil {
 		return nil, fmt.Errorf("create database[%s]'s path with error: %s", databaseName, err)
 	}
+
+	// 解析配置文件
 	cfgPath := optionsPath(dbPath)
 	cfg := &databaseConfig{}
 	if fileutil.Exist(cfgPath) {
@@ -115,10 +130,14 @@ func (e *engine) createDatabase(databaseName string) (Database, error) {
 				databaseName, cfgPath, err)
 		}
 	}
+
+	// 创建 database
 	db, err := newDatabaseFunc(databaseName, dbPath, cfg, e.dataFlushChecker)
 	if err != nil {
 		return nil, err
 	}
+
+	// 保存 database
 	e.dbSet.PutDatabase(databaseName, db)
 	return db, nil
 }
@@ -144,8 +163,7 @@ func (e *engine) CreateShards(
 					logger.Error(err))
 				return err
 			}
-			engineLogger.Info("create database successfully",
-				logger.String("database", databaseName))
+			engineLogger.Info("create database successfully", logger.String("database", databaseName))
 		}
 	}
 
@@ -180,9 +198,7 @@ func (e *engine) Close() {
 	}
 	for dbName, db := range e.dbSet.Entries() {
 		if err := db.Close(); err != nil {
-			engineLogger.Error("close database",
-				logger.String("name", dbName),
-				logger.Error(err))
+			engineLogger.Error("close database", logger.String("name", dbName), logger.Error(err))
 		}
 	}
 }
@@ -201,10 +217,13 @@ func (e *engine) FlushDatabase(_ context.Context, name string) bool {
 
 // load loads the time series engines if exist
 func (e *engine) load() error {
+	// 获取所有子目录，每个子目录对应一个 database
 	databaseNames, err := listDir(config.GlobalStorageConfig().TSDB.Dir)
 	if err != nil {
 		return err
 	}
+
+	// 加载每个 database
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 	for _, databaseName := range databaseNames {
@@ -213,5 +232,6 @@ func (e *engine) load() error {
 			return err
 		}
 	}
+
 	return nil
 }

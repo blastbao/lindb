@@ -19,6 +19,7 @@ package tsdb
 
 import "sync/atomic"
 
+// 数据库集
 type databaseSet struct {
 	value atomic.Value // map[string]Database
 }

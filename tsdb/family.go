@@ -124,6 +124,7 @@ func newDataFamily(
 	familyTime int64,
 	family kv.Family,
 ) DataFamily {
+
 	f := &dataFamily{
 		shard:        shard,
 		interval:     interval,
@@ -207,6 +208,7 @@ func (f *dataFamily) NeedFlush() bool {
 		// check immutable memory database, make sure it is nil
 		return false
 	}
+
 	if f.mutableMemDB == nil || f.mutableMemDB.Size() <= 0 {
 		// no data
 		return false

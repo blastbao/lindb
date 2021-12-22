@@ -28,6 +28,7 @@ import (
 )
 
 // ForwardStore represents int map using roaring bitmap
+// 用 roaring.Bitmap 实现 map[int]struct{}
 type ForwardStore struct {
 	putCount int             // insert count
 	keys     *roaring.Bitmap // store all keys
@@ -43,33 +44,47 @@ func NewForwardStore() *ForwardStore {
 
 // Get returns value by key, if exist returns it, else returns 0, false
 func (m *ForwardStore) Get(key uint32) (uint32, bool) {
+
+	// 为空返回不存在
 	if len(m.values) == 0 {
 		return 0, false
 	}
+
 	// get high index
+	// 获取高位偏移
 	found, highIdx := m.keys.ContainsAndRankForHigh(key)
 	if !found {
 		return 0, false
 	}
+
 	// get low index
+	// 获取低位偏移
 	found, lowIdx := m.keys.ContainsAndRankForLow(key, highIdx-1)
 	if !found {
 		return 0, false
 	}
+
+	// 取 values[high][low] 数据
 	return m.values[highIdx-1][lowIdx-1], true
 }
 
 // Put puts the value by key
 func (m *ForwardStore) Put(key uint32, value uint32) {
+
 	defer m.tryOptimize()
+
+	// 初始化
 	if len(m.values) == 0 {
 		// if values is empty, append new low container directly
 		m.values = append(m.values, []uint32{value})
-
-		m.keys.Add(key)
+		m.keys.Add(key) // 添加到 bitmap
 		return
 	}
+
+	//
 	found, highIdx := m.keys.ContainsAndRankForHigh(key)
+
+	// 如果高位偏移不存在，意味着需要腾出 m.values[highIdx] 位置来存放新数据，腾出后将 value 添加到 m.values[highIdx] 切片中。
 	if !found {
 		// high container not exist, insert it
 		stores := m.values
@@ -79,9 +94,11 @@ func (m *ForwardStore) Put(key uint32, value uint32) {
 		stores[highIdx] = []uint32{value}
 		m.values = stores
 
+		// 添加到 bitmap
 		m.keys.Add(key)
 		return
 	}
+
 	// high container exist
 	lowIdx := m.keys.RankForLow(key, highIdx-1)
 	stores := m.values[highIdx-1]

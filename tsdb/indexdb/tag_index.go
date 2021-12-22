@@ -27,6 +27,8 @@ import (
 //go:generate mockgen -source ./tag_index.go -destination=./tag_index_mock.go -package=indexdb
 
 // TagIndex represents the tag inverted index
+//
+// Tag 的倒排索引。
 type TagIndex interface {
 	// GetGroupingScanner returns the grouping scanners based on series ids
 	GetGroupingScanner(seriesIDs *roaring.Bitmap) ([]series.GroupingScanner, error)
@@ -59,6 +61,7 @@ func (g *memGroupingScanner) GetSeriesAndTagValue(highKey uint16) (roaring.Conta
 }
 
 // tagIndex is a inverted mapping relation of tag-value and seriesID group.
+//
 type tagIndex struct {
 	forward  *ForwardStore  // store forward index, series id=>tag value id, maybe have same tag value id
 	inverted *InvertedStore // store all tag value id=>series ids of tag level
@@ -67,7 +70,9 @@ type tagIndex struct {
 // newTagKVEntrySet returns a new tagKVEntrySet
 func newTagIndex() TagIndex {
 	return &tagIndex{
+		// 倒排索引：TagValueID => SeriesID
 		inverted: NewInvertedStore(),
+		// 正排索引：SeriesID => TagValueID
 		forward:  NewForwardStore(),
 	}
 }
@@ -85,25 +90,34 @@ func (index *tagIndex) GetGroupingScanner(seriesIDs *roaring.Bitmap) ([]series.G
 
 // buildInvertedIndex builds inverted index for tag value id
 func (index *tagIndex) buildInvertedIndex(tagValueID uint32, seriesID uint32) {
+	// 查询倒排索引，获取根据 tagValueID 查询 seriesIDs
 	seriesIDs, ok := index.inverted.Get(tagValueID)
 	if !ok {
 		// create new series ids for new tag value
+		// 不存在，初始化
 		seriesIDs = roaring.NewBitmap()
 		index.inverted.Put(tagValueID, seriesIDs)
 	}
+
+	// 将 seriesID 添加到倒排索引中
 	seriesIDs.Add(seriesID)
 
 	// build forward index, because series id is an unique id, so just put into forward index
+	// 插入正排索引
 	index.forward.Put(seriesID, tagValueID)
 }
 
 // getSeriesIDsByTagValueIDs returns series ids by tag value ids
 func (index *tagIndex) getSeriesIDsByTagValueIDs(tagValueIDs *roaring.Bitmap) *roaring.Bitmap {
+
 	result := roaring.New()
+
 	values := index.inverted.Values()
 	keys := index.inverted.Keys()
+
 	// get final tag value ids need to load
 	finalTagValueIDs := roaring.And(tagValueIDs, keys)
+
 	highKeys := finalTagValueIDs.GetHighKeys()
 	for idx, highKey := range highKeys {
 		loadLowContainer := finalTagValueIDs.GetContainerAtIndex(idx)

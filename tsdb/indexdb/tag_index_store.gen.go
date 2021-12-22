@@ -65,7 +65,6 @@ func (m *TagIndexStore) Put(key uint32, value TagIndex) {
 	if len(m.values) == 0 {
 		// if values is empty, append new low container directly
 		m.values = append(m.values, []TagIndex{value})
-
 		m.keys.Add(key)
 		return
 	}

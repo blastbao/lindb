@@ -56,9 +56,12 @@ func newIntervalSegment(
 	segment IntervalSegment,
 	err error,
 ) {
+
+
 	if err = mkDirIfNotExist(path); err != nil {
 		return segment, err
 	}
+
 	intervalSegment := &intervalSegment{
 		shard:    shard,
 		path:     path,
@@ -73,11 +76,13 @@ func newIntervalSegment(
 	}()
 
 	// load segments if exist
-	//TODO too many kv store load???
+	// TODO too many kv store load???
+
 	segmentNames, err := listDir(path)
 	if err != nil {
 		return segment, err
 	}
+
 	for _, segmentName := range segmentNames {
 		seg, err := newSegment(shard, segmentName, intervalSegment.interval, filepath.Join(path, segmentName))
 		if err != nil {
@@ -101,6 +106,7 @@ func (s *intervalSegment) GetOrCreateSegment(segmentName string) (Segment, error
 		defer s.mutex.Unlock()
 		segment, ok = s.getSegment(segmentName)
 		if !ok {
+			//
 			seg, err := newSegment(s.shard, segmentName, s.interval, filepath.Join(s.path, segmentName))
 			if err != nil {
 				return nil, fmt.Errorf("create segmenet error: %s", err)

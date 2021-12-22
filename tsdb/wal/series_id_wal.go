@@ -64,6 +64,7 @@ type seriesWAL struct {
 
 // NewSeriesWAL creates a new series write ahead log
 func NewSeriesWAL(path string) (SeriesWAL, error) {
+	// 从 path 路径加载 wal pages
 	base, err := newBaseWAL(path, metricMetaPageSize)
 	if err != nil {
 		return nil, err
@@ -71,7 +72,7 @@ func NewSeriesWAL(path string) (SeriesWAL, error) {
 	return &seriesWAL{base: base}, nil
 }
 
-// Append appends metricID/tagsHash/seriesID into wal log
+// Append appends "metricID/tagsHash/seriesID" into wal log
 func (wal *seriesWAL) Append(metricID uint32, tagsHash uint64, seriesID uint32) (err error) {
 	if err := wal.base.checkPage(seriesEntryLength); err != nil {
 		return err
@@ -92,45 +93,56 @@ func (wal *seriesWAL) NeedRecovery() bool {
 func (wal *seriesWAL) Recovery(recovery SeriesRecoveryFunc, commit CommitFunc) {
 	current := wal.base.pageIndex.Load()
 	committed := wal.base.commitPageIndex.Load()
+
+	// 遍历 [commitPage, currPage] ，逐页 redo 。
 	for i := committed; i < current; i++ {
+
+		// 获取 Page
 		walPage, ok := wal.base.walFactory.GetPage(i)
 		if !ok {
 			continue
 		}
+
+		// 逐个 Entry 读取、解析、重做
 		offset := 0
 		for offset < seriesPageSize {
+			// 解析
 			metricID := walPage.ReadUint32(offset + metricIDOffset)
+			tagsHash := walPage.ReadUint64(offset+tagsHashOffset)
+			seriesID := walPage.ReadUint32(offset+seriesIDOffset)
+
+			// 出错
 			if metricID == 0 {
 				break
 			}
 
-			if err := recovery(metricID,
-				walPage.ReadUint64(offset+tagsHashOffset),
-				walPage.ReadUint32(offset+seriesIDOffset)); err != nil {
+			// 恢复
+			if err := recovery(metricID, tagsHash, seriesID); err != nil {
 				recoverSeriesFailCounter.Incr()
-
-				walLogger.Error("invoke recovery func error",
-					logger.String("wal", wal.base.path), logger.Error(err))
+				walLogger.Error("invoke recovery func error", logger.String("wal", wal.base.path), logger.Error(err))
 				return
 			}
+
+			// 修改偏移量
 			offset += seriesEntryLength
 		}
 
+		// 提交当前页
 		if err := commit(); err != nil {
 			recoveryCommitFailCounter.Incr()
-
 			walLogger.Error("invoke commit func error",
 				logger.String("wal", wal.base.path), logger.Error(err))
 			return
 		}
 
+		// 释放页面
 		if err := wal.base.walFactory.ReleasePage(i); err != nil {
 			releaseWALPageFailCounter.Incr()
-
 			walLogger.Error("release series wal page error",
 				logger.String("wal", wal.base.path), logger.Error(err))
 		}
 
+		// 递增已提交页索引
 		wal.base.commitPageIndex.Inc()
 	}
 }
